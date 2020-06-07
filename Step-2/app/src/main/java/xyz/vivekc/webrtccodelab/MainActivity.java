@@ -5,6 +5,7 @@ import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.Toast;
 
 import org.webrtc.AudioSource;
 import org.webrtc.AudioTrack;
@@ -23,6 +24,9 @@ import org.webrtc.VideoCapturerAndroid;
 import org.webrtc.VideoRenderer;
 import org.webrtc.VideoSource;
 import org.webrtc.VideoTrack;
+import org.webrtc.Camera1Enumerator;
+import org.webrtc.Camera2Enumerator;
+import org.webrtc.CameraEnumerator;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +45,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     SurfaceViewRenderer remoteVideoView;
     VideoRenderer localRenderer;
     VideoRenderer remoteRenderer;
+
+    private static final String TAG = "WRTC-MAIN";
 
     PeerConnection localPeer, remotePeer;
     Button start, call, hangup;
@@ -80,25 +86,42 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     // Cycle through likely device names for the camera and return the first
     // capturer that works, or crash if none do.
     private VideoCapturer getVideoCapturer(CameraVideoCapturer.CameraEventsHandler eventsHandler) {
-        String[] cameraFacing = {"front", "back"};
-        int[] cameraIndex = {0, 1};
-        int[] cameraOrientation = {0, 90, 180, 270};
-        for (String facing : cameraFacing) {
-            for (int index : cameraIndex) {
-                for (int orientation : cameraOrientation) {
-                    String name = "Camera " + index + ", Facing " + facing +
-                            ", Orientation " + orientation;
-                    VideoCapturer capturer = VideoCapturerAndroid.create(name, eventsHandler);
-                    if (capturer != null) {
-                        Log.d("Using camera: ", name);
-                        return capturer;
-                    }
+        VideoCapturer videoCapturer;
+        videoCapturer = createCameraCapturer(new Camera1Enumerator(false));
+        return videoCapturer;
+    }
+
+    public void showToast(final String msg) {
+        runOnUiThread(() -> Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show());
+    }
+
+    private VideoCapturer createCameraCapturer(CameraEnumerator enumerator) {
+        final String[] deviceNames = enumerator.getDeviceNames();
+
+       // Trying to find a front facing camera!
+        for (String deviceName : deviceNames) {
+            if (enumerator.isFrontFacing(deviceName)) {
+                VideoCapturer videoCapturer = enumerator.createCapturer(deviceName, null);
+                if (videoCapturer != null) {
+                    Log.d(TAG, "Using front cam:" + deviceName);
+                    return videoCapturer;
                 }
             }
         }
+
+        // We were not able to find a front cam. Look for other cameras
+        for (String deviceName : deviceNames) {
+            if (!enumerator.isFrontFacing(deviceName)) {
+                VideoCapturer videoCapturer = enumerator.createCapturer(deviceName, null);
+                if (videoCapturer != null) {
+                    Log.d(TAG, "Using NON front cam:" + deviceName);
+                    return videoCapturer;
+                }
+            }
+        }
+
         throw new RuntimeException("Failed to open capture");
     }
-
 
     @Override
     public void onClick(View v) {
@@ -147,12 +170,17 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         localAudioTrack = peerConnectionFactory.createAudioTrack("101", audioSource);
         localVideoView.setVisibility(View.VISIBLE);
 
+        //we will start capturing the video from the camera
+        //width,height and fps
+        if (videoCapturerAndroid != null) {
+            videoCapturerAndroid.startCapture(1000, 1000, 30);
+        }
+
         //create a videoRenderer based on SurfaceViewRenderer instance
         localRenderer = new VideoRenderer(localVideoView);
         // And finally, with our VideoRenderer ready, we
         // can add our renderer to the VideoTrack.
         localVideoTrack.addRenderer(localRenderer);
-
     }
 
 
@@ -187,6 +215,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }
 
             public void onAddStream(MediaStream mediaStream) {
+                Log.d(TAG, "Remote peer: onAddStream");
                 super.onAddStream(mediaStream);
                 gotRemoteStream(mediaStream);
             }
@@ -199,10 +228,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         });
 
         //creating local mediastream
+        Log.d(TAG, "Local peer: addStream");
         MediaStream stream = peerConnectionFactory.createLocalMediaStream("102");
         stream.addTrack(localAudioTrack);
         stream.addTrack(localVideoTrack);
-        localPeer.addStream(stream);
+        localPeer.addStream(stream);;
 
         //creating Offer
         localPeer.createOffer(new CustomSdpObserver("localCreateOffer"){
@@ -210,6 +240,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             public void onCreateSuccess(SessionDescription sessionDescription) {
                 //we have localOffer. Set it as local desc for localpeer and remote desc for remote peer.
                 //try to create answer from the remote peer.
+                Log.d(TAG, "Local peer: onCreateSuccess of offer");
                 super.onCreateSuccess(sessionDescription);
                 localPeer.setLocalDescription(new CustomSdpObserver("localSetLocalDesc"), sessionDescription);
                 remotePeer.setRemoteDescription(new CustomSdpObserver("remoteSetRemoteDesc"), sessionDescription);
@@ -217,6 +248,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     @Override
                     public void onCreateSuccess(SessionDescription sessionDescription) {
                         //remote answer generated. Now set it as local desc for remote peer and remote desc for local peer.
+                        Log.d(TAG, "Remote peer: onCreateSuccess of answer");
                         super.onCreateSuccess(sessionDescription);
                         remotePeer.setLocalDescription(new CustomSdpObserver("remoteSetLocalDesc"), sessionDescription);
                         localPeer.setRemoteDescription(new CustomSdpObserver("localSetRemoteDesc"), sessionDescription);
@@ -240,12 +272,16 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void gotRemoteStream(MediaStream stream) {
         //we have remote video stream. add to the renderer.
-        final VideoTrack videoTrack = stream.videoTracks.getFirst();
-        AudioTrack audioTrack = stream.audioTracks.getFirst();
+        final VideoTrack videoTrack = stream.videoTracks.get(0);
+        AudioTrack audioTrack = stream.audioTracks.get(0);
+        Log.d(TAG, "Got Remote stream");
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 try {
+                    Log.d(TAG, "Added Track to renderer " + stream);
+                    Log.d(TAG, " -> Videotracks # " + stream.videoTracks.size());
+                    Log.d(TAG, " -> Audioracks  # " + stream.audioTracks.size());
                     remoteRenderer = new VideoRenderer(remoteVideoView);
                     remoteVideoView.setVisibility(View.VISIBLE);
                     videoTrack.addRenderer(remoteRenderer);

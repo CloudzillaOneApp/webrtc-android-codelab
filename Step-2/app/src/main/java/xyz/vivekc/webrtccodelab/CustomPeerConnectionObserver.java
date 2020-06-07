@@ -6,6 +6,7 @@ import org.webrtc.DataChannel;
 import org.webrtc.IceCandidate;
 import org.webrtc.MediaStream;
 import org.webrtc.PeerConnection;
+import org.webrtc.RtpReceiver;
 
 /**
  * Webrtc_Step2
@@ -14,9 +15,10 @@ import org.webrtc.PeerConnection;
 
 class CustomPeerConnectionObserver implements PeerConnection.Observer {
 
-    private String logTag = this.getClass().getCanonicalName();
+    private String logTag;
 
     CustomPeerConnectionObserver(String logTag) {
+        this.logTag = this.getClass().getCanonicalName();
         this.logTag = this.logTag+" "+logTag;
     }
 
@@ -68,5 +70,10 @@ class CustomPeerConnectionObserver implements PeerConnection.Observer {
     @Override
     public void onRenegotiationNeeded() {
         Log.d(logTag, "onRenegotiationNeeded() called");
+    }
+
+    @Override
+    public void onAddTrack(RtpReceiver rtpReceiver, MediaStream[] mediaStreams) {
+        Log.d(logTag, "onAddTrack() called with: rtpReceiver = [" + rtpReceiver + "], mediaStreams = [" + mediaStreams + "]");
     }
 }
